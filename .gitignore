@@ -1,0 +1,22 @@
+# 敏感信息
+.env
+
+# 虚拟环境 (导致卡顿的主因)
+.venv/
+venv/
+env/
+
+# 业务数据与报告
+*.xlsx
+*.xls
+*.docx
+*.doc
+*.pdf
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 编辑器配置
+.vscode/
+.cursor/
