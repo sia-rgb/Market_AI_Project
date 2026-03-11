@@ -1,11 +1,17 @@
+import os
 import pandas as pd
 import numpy as np
 import json
+import matplotlib.pyplot as plt
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "Arial Unicode MS"]
+plt.rcParams["axes.unicode_minus"] = False
+
 EXCEL_PATH = Path(__file__).parent / "市场AI数据库.xlsx"
+CHARTS_DIR = Path(__file__).parent / "charts"
 
 
 def _clean_standard_sheet(df_raw: pd.DataFrame, value_cols: list[int], col_names: list[str]) -> Optional[pd.DataFrame]:
@@ -73,10 +79,28 @@ def _clean_dual_table(df_raw: pd.DataFrame, date_col1: int, val_col1: int, date_
 
 
 class MarketDataInterpreter:
-    def __init__(self, lookback_window=252): 
-        # 默认回溯一年(约252个交易日)进行历史分位与标准差计算
+    def __init__(self, lookback_window=252):
         self.lookback_window = lookback_window
         self.alerts = []
+
+    def _generate_chart(self, df, col_name, metric_name, latest_date):
+        """生成并保存最近60个交易日的走势图"""
+        CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+        recent_df = df.tail(60)
+        plt.figure(figsize=(8, 3))
+        plt.plot(recent_df.index, recent_df[col_name], color="#2c3e50", linewidth=1.5)
+        plt.scatter(recent_df.index[-1], recent_df[col_name].iloc[-1], color="#e74c3c", zorder=5)
+        plt.title(f"{metric_name} (近60日走势)", fontsize=10)
+        plt.grid(True, linestyle="--", alpha=0.4)
+        plt.xticks(rotation=0, fontsize=8)
+        plt.yticks(fontsize=8)
+        plt.tight_layout()
+        safe_name = metric_name.replace("/", "_").replace("&", "_").replace(" ", "_")
+        chart_filename = f"{safe_name}_{latest_date}.png"
+        chart_path = CHARTS_DIR / chart_filename
+        plt.savefig(chart_path, dpi=150)
+        plt.close()
+        return str(chart_path)
 
     def check_z_score_anomaly(self, df, col_name, metric_name, threshold=2.0):
         """规则1：Z-Score 绝对偏离度监控（突破近一年均值 ±2倍标准差）"""
@@ -92,13 +116,15 @@ class MarketDataInterpreter:
         z_score = (latest_val - mean) / std if std > 0 else 0
         
         if abs(z_score) > threshold:
-            direction = "向上" if z_score > 0 else "向下"
+            direction = "上行" if z_score > 0 else "下探"
+            chart_path = self._generate_chart(df, col_name, metric_name, latest_date)
             self.alerts.append({
                 "date": latest_date,
                 "metric": metric_name,
-                "type": "极值偏离预警",
-                "description": f"{metric_name}触发{direction}偏离，当前值 {latest_val:.4f}，偏离过去一年均值 {abs(z_score):.1f} 个标准差。",
-                "z_score": round(z_score, 2)
+                "type": "极值偏离",
+                "description": f"{metric_name}呈现{direction}偏离，当前值 {latest_val:.4f}，偏离一年均值 {abs(z_score):.1f}σ。",
+                "z_score": round(z_score, 2),
+                "chart_path": chart_path,
             })
 
     def check_volatility_anomaly(self, df, col_name, metric_name, threshold_pct=0.05):
@@ -113,13 +139,15 @@ class MarketDataInterpreter:
         pct_change = (latest_val - prev_val) / prev_val if prev_val != 0 else 0
         
         if abs(pct_change) > threshold_pct:
-            direction = "飙升" if pct_change > 0 else "暴跌"
+            direction = "上行" if pct_change > 0 else "下行"
+            chart_path = self._generate_chart(df, col_name, metric_name, latest_date)
             self.alerts.append({
                 "date": latest_date,
                 "metric": metric_name,
-                "type": "单日波动预警",
+                "type": "单日波动",
                 "description": f"{metric_name}单日{direction} {abs(pct_change)*100:.2f}%，当前值 {latest_val:.4f}。",
-                "pct_change": round(pct_change, 4)
+                "pct_change": round(pct_change, 4),
+                "chart_path": chart_path,
             })
 
     def run_pipeline(self):

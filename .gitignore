@@ -12,6 +12,7 @@ env/
 *.docx
 *.doc
 *.pdf
+charts/
 
 # Python 缓存
 __pycache__/

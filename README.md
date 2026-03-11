@@ -21,12 +21,15 @@ flowchart LR
 | `市场AI数据库.xlsx` | 数据源（需自行放置） |
 | `.env` | API Key 配置（需自行创建） |
 | `daily_alerts.json` | 异动清单（自动生成） |
-| `Market_Insight_Report_*.md` | 战略报告（自动生成） |
+| `charts/` | 异动走势图（自动生成） |
+| `Market_Insight_Report_*.md` | 战略报告 Markdown（自动生成） |
+| `Market_Insight_Report_*.pdf` | 战略报告 PDF（需 wkhtmltopdf） |
 
 ## 环境要求
 
 - Python 3.10+
-- 依赖：pandas, numpy, openai, python-dotenv, openpyxl
+- 依赖：pandas, numpy, openai, python-dotenv, openpyxl, matplotlib, markdown, pdfkit
+- PDF 生成需系统安装 [wkhtmltopdf](https://wkhtmltopdf.org/)（可选，未安装时自动降级为 Markdown）
 
 ## 安装
 
@@ -56,12 +59,14 @@ pip install -r requirements.txt
 ## 使用方法
 
 ```bash
-# 步骤 1：扫描数据并生成异动清单
+# 步骤 1：扫描数据并生成异动清单与走势图
 python data_interpreter.py
 
-# 步骤 2：调用 DeepSeek 生成战略推演报告
+# 步骤 2：调用 DeepSeek 生成战略推演报告（单页 PDF/Markdown）
 python insight_generator.py
 ```
+
+**盘后自动运行**：使用 `run_market_ai.bat`，并在 Windows 任务计划程序中设置为每日 18:00 执行，报告将自动复制到桌面。
 
 ## 数据源说明
 
