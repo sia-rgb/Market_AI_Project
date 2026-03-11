@@ -1,0 +1,120 @@
+{
+  "report_date": "2026-03-11",
+  "market_base_level": [
+    {
+      "metric": "DR001收盘价",
+      "value": 1.314,
+      "percentile": 20.2,
+      "unit": ""
+    },
+    {
+      "metric": "中债10年期收益率",
+      "value": 1.8055,
+      "percentile": 24.7,
+      "unit": "%"
+    },
+    {
+      "metric": "美债10年期收益率",
+      "value": 4.15,
+      "percentile": 38.8,
+      "unit": "%"
+    },
+    {
+      "metric": "人民币汇率",
+      "value": 6.8917,
+      "percentile": 3.5,
+      "unit": "%"
+    },
+    {
+      "metric": "融资买入占比",
+      "value": 9.7704,
+      "percentile": 73.4,
+      "unit": "%"
+    },
+    {
+      "metric": "散户小单净流入",
+      "value": 354069.7105,
+      "percentile": null,
+      "unit": ""
+    }
+  ],
+  "weekly_anomalies": [
+    {
+      "date": "2026-03-13",
+      "metric": "VIX波动率",
+      "type": "单日波动",
+      "description": "VIX波动率周度下行 15.46%，当前值 24.9300。",
+      "pct_change": -0.1546,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\VIX波动率_2026-03-13.png"
+    },
+    {
+      "date": "2026-03-13",
+      "metric": "石油价格",
+      "type": "极值偏离",
+      "description": "石油价格呈现上行偏离，当前值 88.3200，偏离一年均值 3.3σ。",
+      "z_score": 3.26,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\石油价格_2026-03-13.png"
+    },
+    {
+      "date": "2026-03-13",
+      "metric": "石油价格",
+      "type": "单日波动",
+      "description": "石油价格周度下行 6.39%，当前值 88.3200。",
+      "pct_change": -0.0639,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\石油价格_2026-03-13.png"
+    },
+    {
+      "date": "2026-03-13",
+      "metric": "黄金价格",
+      "type": "极值偏离",
+      "description": "黄金价格呈现上行偏离，当前值 5209.7000，偏离一年均值 2.0σ。",
+      "z_score": 2.01,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\黄金价格_2026-03-13.png"
+    },
+    {
+      "date": "2026-03-13",
+      "metric": "人民币汇率",
+      "type": "极值偏离",
+      "description": "人民币汇率呈现下探偏离，当前值 6.8917，偏离一年均值 2.5σ。",
+      "z_score": -2.51,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\人民币汇率_2026-03-13.png"
+    },
+    {
+      "date": "2026-03-13",
+      "metric": "融资买入占比",
+      "type": "单日波动",
+      "description": "融资买入占比周度上行 6.42%，当前值 9.7704。",
+      "pct_change": 0.0642,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\融资买入占比_2026-03-13.png"
+    },
+    {
+      "date": "2026-03-13",
+      "metric": "散户小单净流入",
+      "type": "单日波动",
+      "description": "散户小单净流入周度下行 63.69%，当前值 354069.7105。",
+      "pct_change": -0.6369,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\散户小单净流入_2026-03-13.png"
+    },
+    {
+      "date": "2021-08-13",
+      "metric": "A股成交金额",
+      "type": "极值偏离",
+      "description": "A股成交金额呈现上行偏离，当前值 64778.3971，偏离一年均值 3.3σ。",
+      "z_score": 3.31,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\A股成交金额_2021-08-13.png"
+    },
+    {
+      "date": "2021-08-13",
+      "metric": "上证成交额",
+      "type": "极值偏离",
+      "description": "上证成交额呈现上行偏离，当前值 2705953278200.0000，偏离一年均值 3.4σ。",
+      "z_score": 3.41,
+      "chart_path": "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\上证成交额_2021-08-13.png"
+    }
+  ],
+  "baseline_chart_paths": [
+    "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\baseline_1_2026-03-11.png",
+    "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\baseline_2_2026-03-11.png",
+    "C:\\Users\\xiayi\\OneDrive\\Desktop\\Market_AI_Project\\charts\\baseline_3_2026-03-11.png"
+  ]
+}

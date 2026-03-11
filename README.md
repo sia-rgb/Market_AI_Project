@@ -1,14 +1,14 @@
 # Market AI / 市场AI数据库
 
-从 Excel 市场数据库读取多资产指标，进行 Z-Score 与单日波动率异动检测，并调用 DeepSeek 大模型生成宏观战略推演报告。面向战略研究岗、宏观与市场分析场景。
+从 Excel 市场数据库读取多资产指标，按周度聚合并计算三年滚动分位数，进行 Z-Score 与周度波动异动检测，并调用 DeepSeek 大模型生成宏观战略推演报告。面向战略研究岗、宏观与市场分析场景。
 
 ## 工作流程
 
 ```mermaid
 flowchart LR
     Excel[市场AI数据库.xlsx] --> Interpreter[data_interpreter.py]
-    Interpreter --> Alerts[daily_alerts.json]
-    Alerts --> Generator[insight_generator.py]
+    Interpreter --> Weekly[weekly_report_data.json]
+    Weekly --> Generator[insight_generator.py]
     Generator --> Report[Market_Insight_Report_日期.md]
 ```
 
@@ -16,14 +16,14 @@ flowchart LR
 
 | 文件 | 说明 |
 |------|------|
-| `data_interpreter.py` | 数据清洗与异动检测 |
-| `insight_generator.py` | DeepSeek API 调用与报告生成 |
+| `data_interpreter.py` | 周度聚合、分位数计算、异动检测、三张固定双轴图 |
+| `insight_generator.py` | DeepSeek API 调用与周度报告生成 |
 | `市场AI数据库.xlsx` | 数据源（需自行放置） |
 | `.env` | API Key 配置（需自行创建） |
-| `daily_alerts.json` | 异动清单（自动生成） |
-| `charts/` | 异动走势图（自动生成） |
-| `Market_Insight_Report_*.md` | 战略报告 Markdown（自动生成） |
-| `Market_Insight_Report_*.pdf` | 战略报告 PDF（需 wkhtmltopdf） |
+| `weekly_report_data.json` | 市场水位、本周边际异动、图表路径（自动生成） |
+| `charts/` | 固定双轴图与异动走势图（自动生成） |
+| `Market_Insight_Report_*.md` | 周度战略报告 Markdown（自动生成） |
+| `Market_Insight_Report_*.pdf` | 周度战略报告 PDF（需 wkhtmltopdf） |
 
 ## 环境要求
 
@@ -59,14 +59,14 @@ pip install -r requirements.txt
 ## 使用方法
 
 ```bash
-# 步骤 1：扫描数据并生成异动清单与走势图
+# 步骤 1：扫描数据，周度聚合，生成市场水位与异动清单
 python data_interpreter.py
 
-# 步骤 2：调用 DeepSeek 生成战略推演报告（单页 PDF/Markdown）
+# 步骤 2：调用 DeepSeek 生成周度战略推演报告（单页 PDF/Markdown）
 python insight_generator.py
 ```
 
-**盘后自动运行**：使用 `run_market_ai.bat`，并在 Windows 任务计划程序中设置为每日 18:00 执行，报告将自动复制到桌面。
+**盘后自动运行**：使用 `run_market_ai.bat`，建议在 Windows 任务计划程序中设置为**每周五 18:00** 执行，报告将自动复制到桌面。
 
 ## 数据源说明
 
@@ -81,9 +81,9 @@ python insight_generator.py
 
 ## 输出示例
 
-**daily_alerts.json**：异动类型（极值偏离预警、单日波动预警）、日期、指标、描述。
+**weekly_report_data.json**：市场基础水位（含三年分位数）、本周边际异动、固定双轴图路径。
 
-**Market_Insight_Report_*.md**：核心异动事实、跨资产交叉验证、战略研判指向。
+**Market_Insight_Report_*.md**：宏观坐标判断、边际变化推演、战略研判。
 
 ## 注意事项
 

@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+REPORT_OUTPUT_DIR = Path(r"C:\Users\xiayi\OneDrive\Desktop\Market_AI_Project\每周市场速览")
+
 
 class MarketInsightGenerator:
     def __init__(self, api_key):
@@ -15,38 +17,49 @@ class MarketInsightGenerator:
             base_url="https://api.deepseek.com"
         )
         
-    def load_alerts(self, filepath='daily_alerts.json'):
+    def load_weekly_report(self, filepath="weekly_report_data.json"):
+        """加载周度报告数据"""
         if not os.path.exists(filepath):
-            print("未找到 daily_alerts.json，请先运行数据解释脚本。")
-            return []
-        with open(filepath, 'r', encoding='utf-8') as f:
+            print("未找到 weekly_report_data.json，请先运行 data_interpreter.py。")
+            return {"market_base_level": [], "weekly_anomalies": [], "baseline_chart_paths": []}
+        with open(filepath, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def generate_insights(self, alerts):
-        if not alerts:
-            return "1. 今日无显著核心数据异动，各监测资产均处于历史均值回归区间内。\n2. 宏观流动性与估值水位维持现状。\n3. 战略配置建议维持现有头寸，无需进行战术性调仓。"
+    def generate_insights(self, report_data: dict):
+        """基于市场水位与本周边际异动生成周度洞察"""
+        base_level = report_data.get("market_base_level", [])
+        anomalies = report_data.get("weekly_anomalies", [])
 
-        alerts_text = "\n".join([
-            f"- {a['metric']} ({a['type']}): {a['description']}"
-            for a in alerts
-        ])
+        base_text = "\n".join([
+            f"- {m['metric']}: {m['value']}{m.get('unit','')}（处于过去3年 {m['percentile']}% 分位段）"
+            if m.get("percentile") is not None
+            else f"- {m['metric']}: {m['value']}{m.get('unit','')}"
+            for m in base_level
+        ]) if base_level else "（暂无数据）"
+        anomalies_text = (
+            "\n".join([f"- {a['metric']} ({a['type']}): {a['description']}" for a in anomalies])
+            if anomalies
+            else "本周无异动"
+        )
 
         system_prompt = """你是一个服务于战略研究岗的资深宏观与市场分析Agent。
 你的语言风格必须极其简洁、客观、中立、冷静。
 绝对禁止使用任何主观情绪化或夸张的词汇（例如"暴涨"、"暴跌"、"急剧"、"恐慌"等），必须使用"显著上行"、"偏离均值"、"快速回落"等中性学术表达。
-你的任务是基于输入的数据异动，提取周期性特征并进行交叉验证。"""
+你的任务是基于输入的市场水位与异动数据，进行跨资产交叉验证与周期定位。"""
 
         user_prompt = f"""
-【今日客观异动数据】
-{alerts_text}
+【输入数据】
+1. 市场基础水位（核心指标最新值及过去三年分位数）：
+{base_text}
+
+2. 本周边际异动：
+{anomalies_text}
 
 【分析指令】
-请基于上述数据执行逻辑推演，直接输出3条高度浓缩的战略洞察结论（无需分类标题或开头结尾）。
-每条结论需在80字以内，直击核心矛盾和对未来1个季度的宏观定价影响。
-格式严格如下：
-1. [结论一]
-2. [结论二]
-3. [结论三]
+请按以下结构输出周度洞察：
+1. 宏观坐标判断：基于分位数数据，用一句话客观定性当前的流动性宽裕程度与市场情绪热度。
+2. 边际变化推演：若有异动，评估该异动是否打破了当前的宏观坐标状态；若无异动，评估当前状态继续维持将最利好哪类资产。
+3. 战略研判：输出两条针对下周的资产配置或风险防范结论。
 """
 
         response = self.client.chat.completions.create(
@@ -59,15 +72,19 @@ class MarketInsightGenerator:
         )
         return response.choices[0].message.content
 
-    def export_report(self, content, alerts, output_dir="."):
+    def export_report(self, content, report_data: dict, output_dir=None):
+        """导出周度报告（含核心洞察与固定观测图），默认保存至 每周市场速览 目录"""
+        output_path = Path(output_dir) if output_dir else REPORT_OUTPUT_DIR
+        output_path.mkdir(parents=True, exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
-        output_path = Path(output_dir)
         md_path = output_path / f"Market_Insight_Report_{date_str}.md"
         pdf_path = output_path / f"Market_Insight_Report_{date_str}.pdf"
 
-        md_content = f"# 宏观市场异动推演 ({date_str})\n\n### 核心洞察\n\n{content}\n\n### 异动数据追溯\n\n"
+        md_content = f"# 宏观市场周度异动推演 ({date_str})\n\n### 核心洞察\n\n{content}\n\n### 异动数据追溯\n\n"
 
-        chart_paths = list({a.get("chart_path") for a in alerts if a.get("chart_path")})
+        chart_paths = list({a.get("chart_path") for a in report_data.get("weekly_anomalies", []) if a.get("chart_path")})
+        for p in report_data.get("baseline_chart_paths", []):
+            chart_paths.append(p)
         for chart in chart_paths:
             img_src = Path(chart).as_uri() if Path(chart).is_absolute() else chart
             md_content += f"![]({img_src})\n\n"
@@ -107,20 +124,18 @@ img {{ max-width: 100%; height: auto; margin-bottom: 15px; border: 1px solid #f0
                 pass
 
         if pdf_ok:
-            print(f"执行完毕。单页PDF报告已生成：{pdf_path}")
+            print(f"执行完毕。PDF 已保存至：{pdf_path.resolve()}")
         else:
-            print(f"PDF生成失败（可安装 wkhtmltopdf 或 xhtml2pdf 以获取 PDF）。已保存为 Markdown：{md_path}")
+            print(f"PDF生成失败。Markdown 已保存至：{md_path.resolve()}")
 
 if __name__ == "__main__":
-    # 通过环境变量安全读取 API Key
     API_KEY = os.getenv("DEEPSEEK_API_KEY")
-    
     if not API_KEY:
         raise ValueError("未检测到 API Key，请确认已在 .env 文件中正确配置 DEEPSEEK_API_KEY")
-    
+
     generator = MarketInsightGenerator(api_key=API_KEY)
-    alerts_data = generator.load_alerts()
-    
-    print("正在调用 DeepSeek API 进行逻辑推演与交叉验证，请稍候...")
-    insight_content = generator.generate_insights(alerts_data)
-    generator.export_report(insight_content, alerts_data)
+    report_data = generator.load_weekly_report()
+
+    print("正在调用 DeepSeek API 进行周度逻辑推演与交叉验证，请稍候...")
+    insight_content = generator.generate_insights(report_data)
+    generator.export_report(insight_content, report_data, output_dir=REPORT_OUTPUT_DIR)

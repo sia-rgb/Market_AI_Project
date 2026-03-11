@@ -12,6 +12,17 @@ plt.rcParams["axes.unicode_minus"] = False
 
 EXCEL_PATH = Path(__file__).parent / "市场AI数据库.xlsx"
 CHARTS_DIR = Path(__file__).parent / "charts"
+WEEKLY_LOOKBACK = 52  # 约一年周度数据
+PCTL_WINDOW = 252 * 3  # 三年交易日
+
+
+def calculate_rolling_percentile(series: pd.Series, window: int = PCTL_WINDOW) -> pd.Series:
+    """滚动分位数 (0-100)。日频用 252*3，周频用 52*3"""
+    def _pctl(x):
+        if len(x) < 2 or pd.isna(x.iloc[-1]):
+            return np.nan
+        return (x.rank(pct=True).iloc[-1] - 0.5 / len(x)) * 100
+    return series.rolling(window, min_periods=min(20, window)).apply(_pctl, raw=False)
 
 
 def _clean_standard_sheet(df_raw: pd.DataFrame, value_cols: list[int], col_names: list[str]) -> Optional[pd.DataFrame]:
@@ -78,43 +89,93 @@ def _clean_dual_table(df_raw: pd.DataFrame, date_col1: int, val_col1: int, date_
     return result
 
 
-class MarketDataInterpreter:
-    def __init__(self, lookback_window=252):
-        self.lookback_window = lookback_window
-        self.alerts = []
+# 核心观测指标（纳入分位数与双轴图）
+CORE_METRICS = ["DR001收盘价", "中债10年期收益率", "美债10年期收益率", "人民币汇率", "融资买入占比", "散户小单净流入"]
 
-    def _generate_chart(self, df, col_name, metric_name, latest_date):
-        """生成并保存最近60个交易日的走势图"""
+# 三张固定双轴图配置: (左轴指标, 右轴指标, 标题)
+BASELINE_CHART_CONFIG = [
+    ("DR001收盘价", "中债10年期收益率", "内部流动性与资产定价"),
+    ("美债10年期收益率", "人民币汇率", "外部压力与汇率锚"),
+    ("融资买入占比", "散户小单净流入", "微观情绪与杠杆动能"),
+]
+
+
+class MarketDataInterpreter:
+    def __init__(self, lookback_weeks=52):
+        self.lookback_weeks = lookback_weeks
+        self.alerts = []
+        self.weekly_registry: dict[str, tuple[pd.DataFrame, str]] = {}
+        self.market_base_level: list[dict] = []
+        self.baseline_chart_paths: list[str] = []
+
+    def _resample_weekly(self, df: pd.DataFrame, col_agg: dict[str, str]) -> pd.DataFrame:
+        """按周五聚合，col_agg: {col: 'last'|'mean'|'sum'}"""
+        agg_dict = {c: ("mean" if a == "mean" else ("sum" if a == "sum" else "last")) for c, a in col_agg.items()}
+        return df.resample("W-FRI").agg(agg_dict).dropna(how="all")
+
+    def _generate_chart(self, df: pd.DataFrame, col_name: str, metric_name: str, latest_date: str) -> str:
+        """生成并保存最近52周走势图"""
         CHARTS_DIR.mkdir(parents=True, exist_ok=True)
-        recent_df = df.tail(60)
+        recent = df.tail(52)
         plt.figure(figsize=(8, 3))
-        plt.plot(recent_df.index, recent_df[col_name], color="#2c3e50", linewidth=1.5)
-        plt.scatter(recent_df.index[-1], recent_df[col_name].iloc[-1], color="#e74c3c", zorder=5)
-        plt.title(f"{metric_name} (近60日走势)", fontsize=10)
+        plt.plot(recent.index, recent[col_name], color="#2c3e50", linewidth=1.5)
+        plt.scatter(recent.index[-1], recent[col_name].iloc[-1], color="#e74c3c", zorder=5)
+        plt.title(f"{metric_name} (近52周走势)", fontsize=10)
         plt.grid(True, linestyle="--", alpha=0.4)
         plt.xticks(rotation=0, fontsize=8)
         plt.yticks(fontsize=8)
         plt.tight_layout()
         safe_name = metric_name.replace("/", "_").replace("&", "_").replace(" ", "_")
-        chart_filename = f"{safe_name}_{latest_date}.png"
-        chart_path = CHARTS_DIR / chart_filename
+        chart_path = CHARTS_DIR / f"{safe_name}_{latest_date}.png"
         plt.savefig(chart_path, dpi=150)
         plt.close()
         return str(chart_path)
 
-    def check_z_score_anomaly(self, df, col_name, metric_name, threshold=2.0):
-        """规则1：Z-Score 绝对偏离度监控（突破近一年均值 ±2倍标准差）"""
-        if len(df) < self.lookback_window:
+    def _generate_baseline_chart(self, left_metric: str, right_metric: str, title: str, date_str: str) -> Optional[str]:
+        """双轴对比图"""
+        if left_metric not in self.weekly_registry or right_metric not in self.weekly_registry:
+            return None
+        df_l, col_l = self.weekly_registry[left_metric]
+        df_r, col_r = self.weekly_registry[right_metric]
+        common_idx = df_l.index.intersection(df_r.index).sort_values()
+        if len(common_idx) < 10:
+            return None
+        recent = common_idx[-52:] if len(common_idx) >= 52 else common_idx
+        left_vals = df_l.loc[recent, col_l].reindex(recent).ffill().bfill()
+        right_vals = df_r.loc[recent, col_r].reindex(recent).ffill().bfill()
+        if left_vals.isna().all() or right_vals.isna().all():
+            return None
+        CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+        fig, ax1 = plt.subplots(figsize=(8, 3.5))
+        ax1.plot(recent, left_vals, color="#2c3e50", linewidth=1.5, label=left_metric)
+        ax1.set_ylabel(left_metric, color="#2c3e50", fontsize=9)
+        ax1.tick_params(axis="y", labelcolor="#2c3e50")
+        ax2 = ax1.twinx()
+        ax2.plot(recent, right_vals, color="#e74c3c", linewidth=1.5, alpha=0.8, label=right_metric)
+        ax2.set_ylabel(right_metric, color="#e74c3c", fontsize=9)
+        ax2.tick_params(axis="y", labelcolor="#e74c3c")
+        ax1.set_title(title, fontsize=10)
+        ax1.grid(True, linestyle="--", alpha=0.4)
+        ax1.legend(loc="upper left", fontsize=8)
+        ax2.legend(loc="upper right", fontsize=8)
+        plt.xticks(rotation=0, fontsize=8)
+        plt.tight_layout()
+        idx = next((i for i, (l, r, t) in enumerate(BASELINE_CHART_CONFIG) if t == title), 0)
+        path = CHARTS_DIR / f"baseline_{idx+1}_{date_str}.png"
+        plt.savefig(path, dpi=150)
+        plt.close()
+        return str(path)
+
+    def _check_z_score_anomaly(self, df: pd.DataFrame, col_name: str, metric_name: str, threshold: float = 2.0):
+        """周度 Z-Score 异动"""
+        if len(df) < self.lookback_weeks:
             return
-        
-        recent_data = df.tail(self.lookback_window)
-        mean = recent_data[col_name].mean()
-        std = recent_data[col_name].std()
+        recent = df.tail(self.lookback_weeks)
+        mean = recent[col_name].mean()
+        std = recent[col_name].std()
         latest_val = df[col_name].iloc[-1]
-        latest_date = df.index[-1].strftime('%Y-%m-%d')
-        
+        latest_date = df.index[-1].strftime("%Y-%m-%d")
         z_score = (latest_val - mean) / std if std > 0 else 0
-        
         if abs(z_score) > threshold:
             direction = "上行" if z_score > 0 else "下探"
             chart_path = self._generate_chart(df, col_name, metric_name, latest_date)
@@ -127,17 +188,14 @@ class MarketDataInterpreter:
                 "chart_path": chart_path,
             })
 
-    def check_volatility_anomaly(self, df, col_name, metric_name, threshold_pct=0.05):
-        """规则2：单日波动率异常监控"""
+    def _check_volatility_anomaly(self, df: pd.DataFrame, col_name: str, metric_name: str, threshold_pct: float = 0.05):
+        """周度波动异动"""
         if len(df) < 2:
             return
-            
         latest_val = df[col_name].iloc[-1]
         prev_val = df[col_name].iloc[-2]
-        latest_date = df.index[-1].strftime('%Y-%m-%d')
-        
+        latest_date = df.index[-1].strftime("%Y-%m-%d")
         pct_change = (latest_val - prev_val) / prev_val if prev_val != 0 else 0
-        
         if abs(pct_change) > threshold_pct:
             direction = "上行" if pct_change > 0 else "下行"
             chart_path = self._generate_chart(df, col_name, metric_name, latest_date)
@@ -145,13 +203,137 @@ class MarketDataInterpreter:
                 "date": latest_date,
                 "metric": metric_name,
                 "type": "单日波动",
-                "description": f"{metric_name}单日{direction} {abs(pct_change)*100:.2f}%，当前值 {latest_val:.4f}。",
+                "description": f"{metric_name}周度{direction} {abs(pct_change)*100:.2f}%，当前值 {latest_val:.4f}。",
                 "pct_change": round(pct_change, 4),
                 "chart_path": chart_path,
             })
 
+    def _load_and_register_weekly(self, xl: pd.ExcelFile) -> None:
+        """加载各数据源，周度聚合后写入 weekly_registry"""
+        metric_configs = [
+            ("债券指数", [1, 2], ["cba00203", "cba20103"], ["中债综合指数", "中债投资级中资美元债指数"], {"cba00203": "last", "cba20103": "last"}, 0.03),
+            ("DR001收盘价", [1], ["close"], ["DR001收盘价"], {"close": "last"}, 0.15),
+            ("VIX", [1], ["close"], ["VIX波动率"], {"close": "last"}, 0.10),
+            ("债券收益率", [1, 2], ["cn_10y", "us_10y"], ["中债10年期收益率", "美债10年期收益率"], {"cn_10y": "last", "us_10y": "last"}, 0.05),
+            ("石油价格", [1], ["close"], ["石油价格"], {"close": "last"}, 0.05),
+            ("黄金价格", [1], ["close"], ["黄金价格"], {"close": "last"}, 0.05),
+        ]
+        for sheet_name, value_cols, col_names, metric_names, col_agg, thresh in metric_configs:
+            if sheet_name not in xl.sheet_names:
+                continue
+            try:
+                df_raw = pd.read_excel(xl, sheet_name=sheet_name, header=3)
+                df = _clean_standard_sheet(df_raw, value_cols, col_names)
+                if df is None:
+                    continue
+                df = df.dropna()
+                df_weekly = self._resample_weekly(df, col_agg)
+                for col, metric in zip(col_names, metric_names):
+                    if col not in df_weekly.columns:
+                        continue
+                    self.weekly_registry[metric] = (df_weekly[[col]].dropna(), col)
+                    self._check_z_score_anomaly(df_weekly, col, metric, 2.0)
+                    self._check_volatility_anomaly(df_weekly, col, metric, thresh)
+            except Exception as e:
+                print(f"Sheet [{sheet_name}] 解析失败: {e}")
+
+        if "同业拆借利率" in xl.sheet_names:
+            try:
+                df_raw = pd.read_excel(xl, sheet_name="同业拆借利率", header=3)
+                duals = _clean_dual_table(df_raw, 0, 1, 3, 4, "LIBOR隔夜", "SHIBOR隔夜", 0.15, 0.15)
+                for df, col, metric, thresh in duals:
+                    df = df.dropna()
+                    df_weekly = self._resample_weekly(df, col_agg={col: "last"})
+                    self.weekly_registry[metric] = (df_weekly, col)
+                    self._check_z_score_anomaly(df_weekly, col, metric, 2.0)
+                    self._check_volatility_anomaly(df_weekly, col, metric, thresh)
+            except Exception as e:
+                print(f"Sheet [同业拆借利率] 解析失败: {e}")
+
+        if "美元指数&人民币汇率" in xl.sheet_names:
+            try:
+                df_raw = pd.read_excel(xl, sheet_name="美元指数&人民币汇率", header=3)
+                duals = _clean_dual_table(df_raw, 0, 1, 3, 4, "美元指数", "人民币汇率", 0.02, 0.02)
+                for df, col, metric, thresh in duals:
+                    df = df.dropna()
+                    df_weekly = self._resample_weekly(df, col_agg={col: "last"})
+                    self.weekly_registry[metric] = (df_weekly, col)
+                    self._check_z_score_anomaly(df_weekly, col, metric, 2.0)
+                    self._check_volatility_anomaly(df_weekly, col, metric, thresh)
+            except Exception as e:
+                print(f"Sheet [美元指数&人民币汇率] 解析失败: {e}")
+
+        if "融资融券余额及买入占比" in xl.sheet_names:
+            try:
+                df = _clean_rzrq(xl)
+                if df is not None:
+                    df = df.dropna()
+                    for col, metric, thresh in [("total_balance", "融资融券余额", 0.05), ("buy_ratio", "融资买入占比", 0.05)]:
+                        if col in df.columns:
+                            df_weekly = self._resample_weekly(df[[col]], {col: "last"})
+                            self.weekly_registry[metric] = (df_weekly, col)
+                            self._check_z_score_anomaly(df_weekly, col, metric, 2.0)
+                            self._check_volatility_anomaly(df_weekly, col, metric, thresh)
+            except Exception as e:
+                print(f"Sheet [融资融券余额及买入占比] 解析失败: {e}")
+
+        if "散户情绪资金流向" in xl.sheet_names:
+            try:
+                df = _clean_retail_sentiment(xl)
+                if df is not None:
+                    df = df.dropna()
+                    for col, metric in [("smallBillInflowMoney", "散户小单净流入"), ("largeBillInflowMoney", "大单净流入")]:
+                        if col in df.columns:
+                            df_weekly = self._resample_weekly(df[[col]], {col: "mean"})
+                            self.weekly_registry[metric] = (df_weekly, col)
+                            self._check_z_score_anomaly(df_weekly, col, metric, 2.0)
+                            self._check_volatility_anomaly(df_weekly, col, metric, 0.20)
+            except Exception as e:
+                print(f"Sheet [散户情绪资金流向] 解析失败: {e}")
+
+        if "A股交易量" in xl.sheet_names:
+            try:
+                df = _clean_astock_volume(xl)
+                if df is not None:
+                    df = df.dropna()
+                    for col, metric in [("a_share_amount", "A股成交金额"), ("shangzheng", "上证成交额")]:
+                        if col in df.columns:
+                            df_weekly = self._resample_weekly(df[[col]], {col: "sum"})
+                            self.weekly_registry[metric] = (df_weekly, col)
+                            self._check_z_score_anomaly(df_weekly, col, metric, 2.0)
+                            self._check_volatility_anomaly(df_weekly, col, metric, 0.10)
+            except Exception as e:
+                print(f"Sheet [A股交易量] 解析失败: {e}")
+
+    def _build_market_base_level(self, report_date: str) -> None:
+        """构建市场基础水位（含三年分位数）"""
+        pctl_window_weeks = 52 * 3
+        for metric in CORE_METRICS:
+            if metric not in self.weekly_registry:
+                continue
+            df, col = self.weekly_registry[metric]
+            if len(df) < 2:
+                continue
+            latest_val = df[col].iloc[-1]
+            pctl_series = calculate_rolling_percentile(df[col], window=pctl_window_weeks)
+            pctl = round(float(pctl_series.iloc[-1]), 1) if not pd.isna(pctl_series.iloc[-1]) else None
+            unit = "%" if "%" in metric or "收益率" in metric or "占比" in metric or "汇率" in metric else ""
+            self.market_base_level.append({
+                "metric": metric,
+                "value": round(float(latest_val), 4),
+                "percentile": pctl,
+                "unit": unit,
+            })
+
+    def _generate_baseline_charts(self, date_str: str) -> None:
+        """生成三张固定双轴图"""
+        for left, right, title in BASELINE_CHART_CONFIG:
+            path = self._generate_baseline_chart(left, right, title, date_str)
+            if path:
+                self.baseline_chart_paths.append(path)
+
     def run_pipeline(self):
-        """执行所有数据源的扫描"""
+        """执行周度数据扫描与报告生成"""
         if not EXCEL_PATH.exists():
             print(f"Excel 文件不存在: {EXCEL_PATH}")
             return
@@ -162,113 +344,26 @@ class MarketDataInterpreter:
             print(f"无法打开 Excel 文件: {e}")
             return
 
-        # 标准型 Sheet 配置: (sheet_name, value_col_indices, col_names, metric_names, threshold_pct)
-        standard_configs = [
-            ("债券指数", [1, 2], ["cba00203", "cba20103"], ["中债综合指数", "中债投资级中资美元债指数"], 0.03),
-            ("DR001收盘价", [1], ["close"], ["DR001收盘价"], 0.15),
-            ("VIX", [1], ["close"], ["VIX波动率"], 0.10),
-            ("债券收益率", [1, 2], ["cn_10y", "us_10y"], ["中债10年期收益率", "美债10年期收益率"], 0.05),
-            ("石油价格", [1], ["close"], ["石油价格"], 0.05),
-            ("黄金价格", [1], ["close"], ["黄金价格"], 0.05),
-        ]
+        self._load_and_register_weekly(xl)
+        report_date = datetime.now().strftime("%Y-%m-%d")
+        self._build_market_base_level(report_date)
+        self._generate_baseline_charts(report_date)
 
-        for sheet_name, value_cols, col_names, metric_names, threshold_pct in standard_configs:
-            if sheet_name not in xl.sheet_names:
-                continue
-            try:
-                df_raw = pd.read_excel(xl, sheet_name=sheet_name, header=3)
-                df = _clean_standard_sheet(df_raw, value_cols, col_names)
-                if df is None:
-                    continue
-                df = df.dropna()
-                for col, metric in zip(col_names, metric_names):
-                    if col not in df.columns:
-                        continue
-                    self.check_z_score_anomaly(df, col, metric)
-                    self.check_volatility_anomaly(df, col, metric, threshold_pct=threshold_pct)
-            except Exception as e:
-                print(f"Sheet [{sheet_name}] 解析失败: {e}")
-
-        # 双表型: 同业拆借利率
-        if "同业拆借利率" in xl.sheet_names:
-            try:
-                df_raw = pd.read_excel(xl, sheet_name="同业拆借利率", header=3)
-                duals = _clean_dual_table(df_raw, 0, 1, 3, 4, "LIBOR隔夜", "SHIBOR隔夜", 0.15, 0.15)
-                for df, col, metric, thresh in duals:
-                    df = df.dropna()
-                    self.check_z_score_anomaly(df, col, metric)
-                    self.check_volatility_anomaly(df, col, metric, threshold_pct=thresh)
-            except Exception as e:
-                print(f"Sheet [同业拆借利率] 解析失败: {e}")
-
-        # 双表型: 美元指数&人民币汇率
-        if "美元指数&人民币汇率" in xl.sheet_names:
-            try:
-                df_raw = pd.read_excel(xl, sheet_name="美元指数&人民币汇率", header=3)
-                duals = _clean_dual_table(df_raw, 0, 1, 3, 4, "美元指数", "人民币汇率", 0.02, 0.02)
-                for df, col, metric, thresh in duals:
-                    df = df.dropna()
-                    self.check_z_score_anomaly(df, col, metric)
-                    self.check_volatility_anomaly(df, col, metric, threshold_pct=thresh)
-            except Exception as e:
-                print(f"Sheet [美元指数&人民币汇率] 解析失败: {e}")
-
-        # 融资融券余额及买入占比
-        if "融资融券余额及买入占比" in xl.sheet_names:
-            try:
-                df = _clean_rzrq(xl)
-                if df is not None:
-                    df = df.dropna()
-                    for col, metric, thresh in [("total_balance", "融资融券余额", 0.05), ("buy_ratio", "融资买入占比", 0.05)]:
-                        if col in df.columns:
-                            self.check_z_score_anomaly(df, col, metric)
-                            self.check_volatility_anomaly(df, col, metric, threshold_pct=thresh)
-            except Exception as e:
-                print(f"Sheet [融资融券余额及买入占比] 解析失败: {e}")
-
-        # 散户情绪资金流向
-        if "散户情绪资金流向" in xl.sheet_names:
-            try:
-                df = _clean_retail_sentiment(xl)
-                if df is not None:
-                    df = df.dropna()
-                    for col, metric in zip(
-                        ["smallBillInflowMoney", "largeBillInflowMoney"],
-                        ["散户小单净流入", "大单净流入"],
-                    ):
-                        if col in df.columns:
-                            self.check_z_score_anomaly(df, col, metric)
-                            self.check_volatility_anomaly(df, col, metric, threshold_pct=0.20)
-            except Exception as e:
-                print(f"Sheet [散户情绪资金流向] 解析失败: {e}")
-
-        # A股交易量
-        if "A股交易量" in xl.sheet_names:
-            try:
-                df = _clean_astock_volume(xl)
-                if df is not None:
-                    df = df.dropna()
-                    for col, metric in zip(
-                        ["a_share_amount", "shangzheng"],
-                        ["A股成交金额", "上证成交额"],
-                    ):
-                        if col in df.columns:
-                            self.check_z_score_anomaly(df, col, metric)
-                            self.check_volatility_anomaly(df, col, metric, threshold_pct=0.10)
-            except Exception as e:
-                print(f"Sheet [A股交易量] 解析失败: {e}")
-
-        # 股指: 周度快照，非日频，跳过
-        if "股指" in xl.sheet_names:
-            print("Sheet [股指] 为周度快照结构，暂不纳入日频检测，已跳过。")
-
-    def export_alerts(self, output_path='daily_alerts.json'):
-        """输出异动清单供大模型读取"""
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(self.alerts, f, ensure_ascii=False, indent=2)
-        print(f"扫描完成，共产生 {len(self.alerts)} 条客观异动，已输出至 {output_path}")
+    def export_weekly_report(self, output_path: str = "weekly_report_data.json"):
+        """输出周度报告数据"""
+        report_date = datetime.now().strftime("%Y-%m-%d")
+        payload = {
+            "report_date": report_date,
+            "market_base_level": self.market_base_level,
+            "weekly_anomalies": self.alerts,
+            "baseline_chart_paths": self.baseline_chart_paths,
+        }
+        out_file = Path(output_path).resolve()
+        with open(out_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        print(f"扫描完成，市场水位 {len(self.market_base_level)} 项，异动 {len(self.alerts)} 条，已输出至 {out_file}")
 
 if __name__ == "__main__":
     interpreter = MarketDataInterpreter()
     interpreter.run_pipeline()
-    interpreter.export_alerts()
+    interpreter.export_weekly_report()
