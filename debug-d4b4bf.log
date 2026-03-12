@@ -1,1 +1,0 @@
-{"hypothesisId": "H1", "location": "insight_generator.py:export_report", "message": "wkhtmltopdf lookup", "data": {"candidates": ["wkhtmltopdf", "C:\\Program Files\\wkhtmltopdf\\bin\\wkhtmltopdf.exe", "C:\\Program Files (x86)\\wkhtmltopdf\\bin\\wkhtmltopdf.exe"], "found": null}, "timestamp": 1773217166553}

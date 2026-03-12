@@ -363,6 +363,129 @@ class MarketDataInterpreter:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         print(f"扫描完成，市场水位 {len(self.market_base_level)} 项，异动 {len(self.alerts)} 条，已输出至 {out_file}")
 
+
+INDEX_NAMES_ORDER = ["标普500", "道琼斯", "富时100", "恒生指数", "日经225", "上证综指"]
+INDEX_NAME_ALIASES = {
+    "标普500": ["标普500", "SPX"],
+    "道琼斯": ["道琼斯", "DJI", "道指"],
+    "富时100": ["富时100", "FTSE", "英国富时100"],
+    "恒生指数": ["恒生指数", "HSI"],
+    "日经225": ["日经225", "N225", "日经"],
+    "上证综指": ["上证综指", "上证指数", "000001"],
+}
+
+
+def extract_index_summary_table(excel_path) -> Optional[pd.DataFrame]:
+    """从股指 sheet 提取 6 个指数的汇总表，列：指数名、最新收盘价、最近1周、最近1月、2026年至今、2025年全年"""
+    try:
+        df_raw = pd.read_excel(excel_path, sheet_name="股指", header=2)
+    except Exception as e:
+        print(f"读取股指 sheet 失败: {e}")
+        return None
+    if len(df_raw) == 0 or len(df_raw.columns) < 7:
+        return None
+    # 列位置：0=Code, 1=Name, 2=最新收盘价, 3=最近1周, 4=最近1月, 5=2026年至今, 6=2025年全年
+    name_idx, close_idx = 1, 2
+    pct_idxs = [3, 4, 5, 6]
+    result_rows = []
+    for target_name in INDEX_NAMES_ORDER:
+        aliases = INDEX_NAME_ALIASES.get(target_name, [target_name])
+        row = None
+        for _, r in df_raw.iterrows():
+            val = r.iloc[name_idx] if name_idx < len(r) else ""
+            if pd.isna(val):
+                continue
+            val_str = str(val).strip()
+            if any(a in val_str or val_str in a for a in aliases):
+                row = r
+                break
+        if row is None:
+            continue
+        close_val = row.iloc[close_idx] if close_idx < len(row) else np.nan
+        pct_vals = [row.iloc[i] if i < len(row) else np.nan for i in pct_idxs]
+        result_rows.append({
+            "指数名": target_name,
+            "最新收盘价": close_val,
+            "最近1周": pct_vals[0],
+            "最近1月": pct_vals[1],
+            "2026年至今": pct_vals[2],
+            "2025年全年": pct_vals[3],
+        })
+    if not result_rows:
+        return None
+    return pd.DataFrame(result_rows)
+
+
+def _fmt_pct(val) -> str:
+    """格式化涨跌幅：正数红色显示，负数绿色加括号"""
+    if pd.isna(val):
+        return ""
+    try:
+        v = float(val)
+        pct = v * 100
+        if pct >= 0:
+            return f"{pct:.1f}%"
+        return f"({-pct:.1f}%)"
+    except (TypeError, ValueError):
+        return str(val)
+
+
+def generate_index_summary_html(df: pd.DataFrame) -> Optional[str]:
+    """生成全球主要股票指数一览 HTML 表格，两行表头（涨跌幅% 跨 4 列），涨红跌绿"""
+    if df is None or df.empty:
+        return None
+    from datetime import datetime
+    y = datetime.now().year
+    pct_cols = ["最近1周", "最近1月", "2026年至今", "2025年全年"]
+    rows = []
+    rows.append(
+        '<tr style="background:#0f5c8a; color:white">'
+        '<td colspan="6" style="text-align:center; font-family:KaiTi,serif; font-weight:bold; padding:8px">全球主要股票指数一览</td>'
+        "</tr>"
+    )
+    rows.append(
+        '<tr style="background:#F0F0F0; font-family:KaiTi,serif; font-weight:bold">'
+        '<td style="padding:6px 10px; border:1px solid #ddd"></td>'
+        '<td style="padding:6px 10px; border:1px solid #ddd">最新收盘价</td>'
+        '<td colspan="4" style="padding:6px 10px; border:1px solid #ddd; text-align:center">涨跌幅%</td>'
+        "</tr>"
+    )
+    rows.append(
+        '<tr style="background:#F0F0F0; font-family:KaiTi,serif; font-weight:bold">'
+        '<td style="padding:6px 10px; border:1px solid #ddd"></td>'
+        '<td style="padding:6px 10px; border:1px solid #ddd"></td>'
+        f'<td style="padding:6px 10px; border:1px solid #ddd">最近1周</td>'
+        f'<td style="padding:6px 10px; border:1px solid #ddd">最近1月</td>'
+        f'<td style="padding:6px 10px; border:1px solid #ddd">{y}年至今</td>'
+        f'<td style="padding:6px 10px; border:1px solid #ddd">{y-1}年全年</td>'
+        "</tr>"
+    )
+    for _, r in df.iterrows():
+        close = r.get("最新收盘价", np.nan)
+        close_str = f"{float(close):,.0f}" if not pd.isna(close) and str(close) != "" else ""
+        cells = [
+            f'<td style="padding:6px 10px; border:1px solid #ddd; font-family:KaiTi,serif">{r.get("指数名", "")}</td>',
+            f'<td style="padding:6px 10px; border:1px solid #ddd; font-family:Times New Roman,serif">{close_str}</td>',
+        ]
+        for col in pct_cols:
+            val = r.get(col, np.nan)
+            txt = _fmt_pct(val)
+            color = "black"
+            if not pd.isna(val):
+                try:
+                    color = "#FF0000" if float(val) >= 0 else "#00A000"
+                except (TypeError, ValueError):
+                    pass
+            cells.append(f'<td style="padding:6px 10px; border:1px solid #ddd; font-family:Times New Roman,serif; color:{color}">{txt}</td>')
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    return (
+        '<div style="width:50%; max-width:50%; margin-bottom:20px">'
+        '<table style="width:100%; border-collapse:collapse; font-size:10pt">'
+        + "".join(rows)
+        + "</table></div>"
+    )
+
+
 if __name__ == "__main__":
     interpreter = MarketDataInterpreter()
     interpreter.run_pipeline()

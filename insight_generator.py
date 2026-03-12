@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 REPORT_OUTPUT_DIR = Path(r"C:\Users\xiayi\OneDrive\Desktop\Market_AI_Project\每周市场速览")
+EXCEL_PATH = Path(__file__).parent / "市场AI数据库.xlsx"
+CHARTS_DIR = Path(__file__).parent / "charts"
 
 
 class MarketInsightGenerator:
@@ -82,6 +84,16 @@ class MarketInsightGenerator:
 
         md_content = f"# 宏观市场周度异动推演 ({date_str})\n\n### 核心洞察\n\n{content}\n\n### 异动数据追溯\n\n"
 
+        table_html = ""
+        if EXCEL_PATH.exists():
+            try:
+                from data_interpreter import extract_index_summary_table, generate_index_summary_html
+                df_index = extract_index_summary_table(EXCEL_PATH)
+                if df_index is not None and not df_index.empty:
+                    table_html = generate_index_summary_html(df_index) or ""
+            except Exception as e:
+                print(f"全球股指一览表生成失败: {e}")
+
         chart_paths = list({a.get("chart_path") for a in report_data.get("weekly_anomalies", []) if a.get("chart_path")})
         for p in report_data.get("baseline_chart_paths", []):
             chart_paths.append(p)
@@ -94,13 +106,17 @@ class MarketInsightGenerator:
 
         import markdown
         html_body = markdown.markdown(md_content)
+
         html_content = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>
 body {{ font-family: sans-serif; color: #333; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
 h1 {{ font-size: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px; }}
 h3 {{ font-size: 16px; margin-top: 20px; }}
 img {{ max-width: 100%; height: auto; margin-bottom: 15px; border: 1px solid #f0f0f0; }}
-</style></head><body>{html_body}</body></html>"""
+</style></head><body>
+{table_html}
+{html_body}
+</body></html>"""
 
         pdf_ok = False
         try:
